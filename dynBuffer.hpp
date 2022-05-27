@@ -19,17 +19,62 @@
 #include <algorithm>
 
 namespace magpie {
-template <typename T, typename Allocator = std::allocator<T>> class dynbuffer {
+
+namespace {
+
+template <class Allocator, bool = std::is_empty<Allocator>::value>
+class potentiallyEmptyAllocator;
+
+template <class Allocator> class potentiallyEmptyAllocator<Allocator, false> {
+  Allocator allocator_ = Allocator();
+
+public:
+  potentiallyEmptyAllocator(){};
+  potentiallyEmptyAllocator(potentiallyEmptyAllocator const &other) = delete;
+  potentiallyEmptyAllocator(potentiallyEmptyAllocator &&other) noexcept
+      : allocator_(other.allocator_){};
+
+  auto operator=(potentiallyEmptyAllocator &&other) noexcept
+      -> potentiallyEmptyAllocator & {
+    std::swap(other.allocator_, allocator_);
+    return *this;
+  }
+  auto operator=(potentiallyEmptyAllocator const &other) noexcept
+      -> potentiallyEmptyAllocator & = delete;
+
+  ~potentiallyEmptyAllocator() = default;
+
+  auto allocator() noexcept -> Allocator & { return allocator_; }
+};
+
+template <class Allocator>
+class potentiallyEmptyAllocator<Allocator, true> : protected Allocator {
+public:
+  potentiallyEmptyAllocator(){};
+  auto allocator() noexcept -> Allocator & {
+    return static_cast<Allocator &>(*this);
+  }
+};
+
+} // namespace
+
+template <typename T, typename Allocator = std::allocator<T>>
+class dynbuffer : potentiallyEmptyAllocator<Allocator> {
 
 public:
   // Types
   using value_type = T;
-  using size_type = size_t;
-  using difference_type = std::ptrdiff_t;
+  using allocator_type = Allocator;
+
+  using size_type = typename std::allocator_traits<allocator_type>::size_type;
+  using difference_type =
+      typename std::allocator_traits<allocator_type>::difference_type;
+  using pointer = typename std::allocator_traits<allocator_type>::pointer;
+  using const_pointer =
+      typename std::allocator_traits<allocator_type>::const_pointer;
+
   using reference = value_type &;
   using const_reference = value_type const &;
-  using pointer = typename std::allocator_traits<T>::pointer;
-  using const_pointer = typename std::allocator_traits<T>::const_pointer;
   using iterator = pointer;
   using const_iterator = const_pointer;
   using reverse_iterator = std::reverse_iterator<iterator>;
@@ -37,6 +82,8 @@ public:
 
   // Destructor
   ~dynbuffer() noexcept;
+
+  dynbuffer();
 
   // Constructors
   // Non init constructor
@@ -88,25 +135,32 @@ public:
   auto crend() const -> const_reverse_iterator;
 
 private:
-  size_type _size;
-  pointer _ptr;
+  size_type size_ = 0;
+  pointer ptr_ = nullptr;
 };
 
 } // namespace magpie
 
+template <typename T, class Alloc> magpie::dynbuffer<T, Alloc>::dynbuffer() {}
+
+template <typename T, class Alloc>
+magpie::dynbuffer<T, Alloc>::~dynbuffer() noexcept {
+  this->allocator().deallocate(ptr_, size_);
+}
+
 template <typename T, class Alloc>
 magpie::dynbuffer<T, Alloc>::dynbuffer(size_type n)
-    : _size(n), _ptr(Alloc::allocate(n)) {}
+    : size_(n), ptr_(this->allocator().allocate(n)) {}
 
 template <typename T, class Alloc>
 magpie::dynbuffer<T, Alloc>::dynbuffer(dynbuffer &&b) noexcept
-    : _size(b.size()), _ptr(b._ptr) {}
+    : size_(b.size()), ptr_(b.ptr_) {}
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::operator=(dynbuffer &&b) noexcept
     -> dynbuffer & {
-  std::swap(b._ptr, _ptr);
-  std::swap(b._size, _size);
+  std::swap(b.ptr_, ptr_);
+  std::swap(b.size_, size_);
   return *this;
 }
 
@@ -118,7 +172,7 @@ auto magpie::dynbuffer<T, Alloc>::at(size_type pos) -> reference {
         "cannot access element at position "s + std::to_string(pos) +
         " from a dynbuffer with size " + std::to_string(size())};
   }
-  return _ptr[pos];
+  return ptr_[pos];
 }
 
 template <typename T, class Alloc>
@@ -129,68 +183,68 @@ auto magpie::dynbuffer<T, Alloc>::at(size_type pos) const -> const_reference {
         "cannot access element at position "s + std::to_string(pos) +
         " from a dynbuffer with size " + std::to_string(size())};
   }
-  return _ptr[pos];
+  return ptr_[pos];
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::operator[](size_type pos) -> reference {
-  return _ptr[pos];
+  return ptr_[pos];
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::operator[](size_type pos) const
     -> const_reference {
-  return _ptr[pos];
+  return ptr_[pos];
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::data() -> pointer {
-  return _ptr;
+  return ptr_;
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::data() const -> const_pointer {
-  return _ptr;
+  return ptr_;
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::empty() const -> bool {
-  return _size == 0;
+  return size_ == 0;
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::size() const -> size_type {
-  return _size;
+  return size_;
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::begin() -> iterator {
-  return _ptr;
+  return ptr_;
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::begin() const -> const_iterator {
-  return _ptr;
+  return ptr_;
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::cbegin() const -> const_iterator {
-  return _ptr;
+  return ptr_;
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::end() -> iterator {
-  return _ptr + size();
+  return ptr_ + size();
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::end() const -> const_iterator {
-  return _ptr + size();
+  return ptr_ + size();
 }
 
 template <typename T, class Alloc>
 auto magpie::dynbuffer<T, Alloc>::cend() const -> const_iterator {
-  return _ptr + size();
+  return ptr_ + size();
 }
 
 template <typename T, class Alloc>
